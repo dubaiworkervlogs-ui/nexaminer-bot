@@ -1,109 +1,124 @@
 export default {
   async fetch(request, env) {
-    if (request.method !== "POST") {
+    const url = new URL(request.url);
+
+    // Open the game website
+    if (request.method === "GET") {
+      if (env.ASSETS) {
+        return env.ASSETS.fetch(request);
+      }
+
       return new Response("NexaMine is online 🚀");
     }
 
-    try {
-      const update = await request.json();
+    // Telegram webhook
+    if (request.method === "POST") {
+      try {
+        const update = await request.json();
 
-      if (!update.message) {
-        return new Response("OK");
-      }
+        if (!update.message) {
+          return new Response("OK");
+        }
 
-      const chatId = update.message.chat.id;
-      const user = update.message.from;
-      const text = update.message.text || "";
+        const chatId = update.message.chat.id;
+        const user = update.message.from;
+        const text = update.message.text || "";
 
-      // Create user if they don't exist
-      await env.DB.prepare(`
-        INSERT OR IGNORE INTO users
-        (telegram_id, username, first_name, balance, mining_rate, last_mined, created_at)
-        VALUES (?, ?, ?, 0, 10, 0, ?)
-      `)
-        .bind(
-          String(user.id),
-          user.username || null,
-          user.first_name || null,
-          Math.floor(Date.now() / 1000)
-        )
-        .run();
-
-      // START
-      if (text === "/start") {
-        const result = await env.DB.prepare(`
-          SELECT balance, mining_rate FROM users
-          WHERE telegram_id = ?
-        `)
-          .bind(String(user.id))
-          .first();
-
-        await sendTelegramMessage(
-          env.BOT_TOKEN,
-          chatId,
-          `⛏️ Welcome to NexaMine!\n\n` +
-          `Mine • Earn • Grow 🚀\n\n` +
-          `🪙 Balance: ${result.balance} NXM\n` +
-          `⛏️ Mining Rate: ${result.mining_rate} NXM\n\n` +
-          `Use /mine to mine.`
-        );
-      }
-
-      // MINE
-      else if (text === "/mine") {
-        const result = await env.DB.prepare(`
-          SELECT balance, mining_rate
-          FROM users
-          WHERE telegram_id = ?
-        `)
-          .bind(String(user.id))
-          .first();
-
-        const newBalance = result.balance + result.mining_rate;
-
+        // Create user
         await env.DB.prepare(`
-          UPDATE users
-          SET balance = ?, last_mined = ?
-          WHERE telegram_id = ?
+          INSERT OR IGNORE INTO users
+          (telegram_id, username, first_name, balance, mining_rate, last_mined, created_at)
+          VALUES (?, ?, ?, 0, 10, 0, ?)
         `)
           .bind(
-            newBalance,
-            Math.floor(Date.now() / 1000),
-            String(user.id)
+            String(user.id),
+            user.username || null,
+            user.first_name || null,
+            Math.floor(Date.now() / 1000)
           )
           .run();
 
-        await sendTelegramMessage(
-          env.BOT_TOKEN,
-          chatId,
-          `⛏️ Mining successful!\n\n` +
-          `🪙 +${result.mining_rate} NXM\n` +
-          `💰 Balance: ${newBalance} NXM`
-        );
+        // START
+        if (text === "/start") {
+          await sendTelegramMessage(
+            env.BOT_TOKEN,
+            chatId,
+            "⛏️ Welcome to NexaMine!\n\nMine • Earn • Grow 🚀",
+            {
+              inline_keyboard: [
+                [
+                  {
+                    text: "⛏️ PLAY NEXAMINE",
+                    web_app: {
+                      url: "https://nexaminer-bot.dubaiworkervlogs.workers.dev/"
+                    }
+                  }
+                ]
+              ]
+            }
+          );
+        }
+
+        // Old command kept for testing
+        else if (text === "/mine") {
+          const result = await env.DB.prepare(`
+            SELECT balance, mining_rate
+            FROM users
+            WHERE telegram_id = ?
+          `)
+            .bind(String(user.id))
+            .first();
+
+          const newBalance = result.balance + result.mining_rate;
+
+          await env.DB.prepare(`
+            UPDATE users
+            SET balance = ?, last_mined = ?
+            WHERE telegram_id = ?
+          `)
+            .bind(
+              newBalance,
+              Math.floor(Date.now() / 1000),
+              String(user.id)
+            )
+            .run();
+
+          await sendTelegramMessage(
+            env.BOT_TOKEN,
+            chatId,
+            `⛏️ Mining successful!\n\n+${result.mining_rate} NXM\n💰 Balance: ${newBalance} NXM`
+          );
+        }
+
+        return new Response("OK");
+
+      } catch (error) {
+        console.error("NexaMine Error:", error);
+        return new Response("Internal Server Error", {
+          status: 500
+        });
       }
-
-      // HELP
-      else if (text === "/help") {
-        await sendTelegramMessage(
-          env.BOT_TOKEN,
-          chatId,
-          `⛏️ NexaMine Help\n\n` +
-          `/start — Open NexaMine\n` +
-          `/mine — Mine coins\n` +
-          `/help — Help`
-        );
-      }
-
-      return new Response("OK");
-
-    } catch (error) {
-      console.error("NexaMine Error:", error);
-      return new Response("Internal Server Error", { status: 500 });
     }
+
+    return new Response("NexaMine");
   }
 };
 
-async function sendTelegramMessage(token, chatId, text) {
+async function sendTelegramMessage(
+  token,
+  chatId,
+  text,
+  replyMarkup = null
+) {
+  const body = {
+    chat_id: chatId,
+    text: text
+  };
+
+  if (replyMarkup) {
+    body.reply_markup = replyMarkup;
+  }
+
   const response = await fetch(
     `https://api.telegram.org/bot${token}/sendMessage`,
     {
@@ -111,15 +126,15 @@ async function sendTelegramMessage(token, chatId, text) {
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text
-      })
+      body: JSON.stringify(body)
     }
   );
 
+  const result = await response.text();
+
+  console.log("Telegram response:", result);
+
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(error);
+    throw new Error(result);
   }
 }
