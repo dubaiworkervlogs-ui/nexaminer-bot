@@ -1,3 +1,12 @@
 name = "nexaminer-bot"
 main = "index.js"
 compatibility_date = "2026-08-19"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "nexaminer-db"
+database_id = "23b8cdcf-53a9-4467-a878-bebe8c0d049d"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
